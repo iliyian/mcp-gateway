@@ -1,31 +1,42 @@
-import requests
-from dotenv import dotenv_values
+"""MCP 代理测试：playwright + context7"""
+from mcp_client import call, INIT_PARAMS
 
-env = dotenv_values('.env')
-TOKEN = env.get('AUTH_TOKEN', '')
+# ==========================================
+# Playwright
+# ==========================================
+print("=== [Playwright] 1. Initialize ===")
+call("playwright", "initialize", INIT_PARAMS, req_id=1)
 
-URL = 'http://127.0.0.1:6000/playwright'
-HEADERS = {
-    'Authorization': f'Bearer {TOKEN}',
-    'Content-Type': 'application/json'
-}
+print("=== [Playwright] 2. tools/list（检查 dummy 注入）===")
+result = call("playwright", "tools/list", {}, req_id=2)
+for tool in result.get("result", {}).get("tools", []):
+    schema = tool.get("inputSchema", {})
+    print(f"  {tool['name']}: required={schema.get('required', [])}, has_dummy={'dummy' in schema.get('properties', {})}")
+print()
 
-# MCP initialize 请求
-payload = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "test", "version": "0.1.0"}
-    }
-}
+print("=== [Playwright] 3. Navigate ===")
+call("playwright", "tools/call", {
+    "name": "browser_navigate",
+    "arguments": {"url": "https://iliyian.com"}
+}, req_id=3)
 
-print(f"[*] 发送 initialize 请求到 {URL}")
-try:
-    resp = requests.post(URL, json=payload, headers=HEADERS, timeout=30)
-    print(f"[*] 状态码: {resp.status_code}")
-    print(f"[*] 响应: {resp.text[:500]}")
-except Exception as e:
-    print(f"[!] 请求失败: {e}")
+print("=== [Playwright] 4. 模拟 Gemini: browser_snapshot(dummy='') ===")
+call("playwright", "tools/call", {
+    "name": "browser_snapshot",
+    "arguments": {"dummy": ""}
+}, req_id=4)
+
+# ==========================================
+# Context7
+# ==========================================
+print("=== [Context7] 1. Initialize ===")
+call("context7", "initialize", INIT_PARAMS, req_id=1)
+
+print("=== [Context7] 2. tools/list ===")
+call("context7", "tools/list", {}, req_id=2)
+
+print("=== [Context7] 3. resolve-library-id ===")
+call("context7", "tools/call", {
+    "name": "resolve-library-id",
+    "arguments": {"libraryName": "playwright"}
+}, req_id=3)
