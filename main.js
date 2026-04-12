@@ -76,7 +76,7 @@ function createMCPManager(name, cmd, args, opts = {}) {
                     if (opts.injectHints && method === 'tools/list' && msg.result && Array.isArray(msg.result.tools)) {
                         for (const tool of msg.result.tools) {
                             if (tool.name === 'browser_navigate') {
-                                tool.description = 'Navigate to a URL. Search engine: https://searxng.iliyian.com/search?q=<kw>. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
+                                tool.description = 'Navigate to a URL. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
                                 console.log(`[${name}] 已修改 browser_navigate 工具描述`);
                             }
                         }
@@ -187,6 +187,12 @@ const context7MCP = createMCPManager(
 );
 context7MCP.start();
 
+const duckduckgoMCP = createMCPManager(
+    'DuckDuckGo',
+    'uvx', ['duckduckgo-mcp-server']
+);
+duckduckgoMCP.start();
+
 // ==========================================
 // 认证中间件
 // ==========================================
@@ -239,6 +245,10 @@ app.post('/context7', auth, (req, res) => {
     context7MCP.handle(req, res);
 });
 
+app.post('/duckduckgo', auth, (req, res) => {
+    duckduckgoMCP.handle(req, res);
+});
+
 // ==========================================
 // 启动服务
 // ==========================================
@@ -249,5 +259,6 @@ app.listen(PORT, HOST, () => {
     console.log(`✅ 服务已启动`);
     console.log(`👉 Playwright: http://${HOST}:${PORT}/playwright`);
     console.log(`👉 Context7:   http://${HOST}:${PORT}/context7`);
+    console.log(`👉 DuckDuckGo: http://${HOST}:${PORT}/duckduckgo`);
     console.log(`🔑 请在请求头中添加: Authorization: Bearer <AUTH_TOKEN>`);
 });
