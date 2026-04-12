@@ -37,6 +37,7 @@ let globalRequestId = 900000;
 function createMCPManager(name, cmd, args, opts = {}) {
     let child = null;
     let rl = null;
+    let initResult = null;
     const pending = new Map();
 
     function start() {
@@ -76,7 +77,7 @@ function createMCPManager(name, cmd, args, opts = {}) {
                     if (opts.injectHints && method === 'tools/list' && msg.result && Array.isArray(msg.result.tools)) {
                         for (const tool of msg.result.tools) {
                             if (tool.name === 'browser_navigate') {
-                                tool.description = 'Navigate to a URL. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
+                                tool.description = 'Navigate to a URL. For web searches, use https://duckduckgo.com/?q=[keywords]. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
                                 console.log(`[${name}] 已修改 browser_navigate 工具描述`);
                             }
                         }
@@ -108,6 +109,20 @@ function createMCPManager(name, cmd, args, opts = {}) {
         });
 
         console.log(`[${name}] 子进程已启动 PID: ${child.pid}`);
+
+        // 自动发送 initialize 握手（Python MCP SDK 要求必须先初始化）
+        if (opts.autoInit) {
+            sendInternal('initialize', {
+                protocolVersion: '2024-11-05',
+                capabilities: {},
+                clientInfo: { name: 'mcp-gateway', version: '1.0' }
+            }, (data) => {
+                initResult = data;
+                console.log(`[${name}] 自动初始化完成`);
+                // 发送 initialized 通知
+                child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+            });
+        }
     }
 
     // 发送内部指令（不经过 HTTP 层）
@@ -151,6 +166,15 @@ function createMCPManager(name, cmd, args, opts = {}) {
             return res.status(204).end();
         }
 
+        // 已自动初始化的进程，拦截客户端的 initialize 请求，直接返回缓存结果
+        if (opts.autoInit && parsed.method === 'initialize' && initResult) {
+            const cached = JSON.parse(initResult);
+            cached.id = reqId;
+            console.log(`[${name}:${reqId}] 返回缓存的 initialize 结果`);
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify(cached));
+        }
+
         // 过滤掉注入的 dummy 参数
         if (opts.stripDummy && parsed.method === 'tools/call' && parsed.params?.arguments) {
             delete parsed.params.arguments.dummy;
@@ -189,7 +213,8 @@ context7MCP.start();
 
 const duckduckgoMCP = createMCPManager(
     'DuckDuckGo',
-    'uvx', ['duckduckgo-mcp-server']
+    'uvx', ['duckduckgo-mcp-server'],
+    { autoInit: true }
 );
 duckduckgoMCP.start();
 
