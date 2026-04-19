@@ -72,12 +72,20 @@ function createMCPManager(name, cmd, args, opts = {}) {
                         line = JSON.stringify(msg);
                     }
 
-                    // 注入使用建议：修改 browser_navigate 工具描述
+                    // 注入使用建议：修改 Playwright 工具描述
                     if (opts.injectHints && method === 'tools/list' && msg.result && Array.isArray(msg.result.tools)) {
                         for (const tool of msg.result.tools) {
                             if (tool.name === 'browser_navigate') {
                                 tool.description = 'Navigate to a URL. Search engine: https://searxng.iliyian.com/search?q=<kw>. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
                                 console.log(`[${name}] 已修改 browser_navigate 工具描述`);
+                            }
+                            if (tool.name === 'browser_snapshot') {
+                                tool.description = `${tool.description || 'Capture accessibility snapshot of the current page.'} Prefer this tool to inspect the auto-returned YAML page structure before using browser_run_code. Do not use browser_run_code to parse page DOM/content unless snapshot is insufficient.`;
+                                console.log(`[${name}] 已修改 browser_snapshot 工具描述`);
+                            }
+                            if (tool.name === 'browser_run_code') {
+                                tool.description = `${tool.description || 'Run JavaScript in the browser page.'} Prefer browser_snapshot for reading or parsing page content; use this only for actions or checks that cannot be done from the YAML snapshot.`;
+                                console.log(`[${name}] 已修改 browser_run_code 工具描述`);
                             }
                         }
                         line = JSON.stringify(msg);
