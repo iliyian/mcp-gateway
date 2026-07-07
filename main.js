@@ -33,6 +33,42 @@ if (!AUTH_TOKEN) {
 // MCP 进程管理器工厂
 // ==========================================
 let globalRequestId = 900000;
+const BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL = 'browser_navigate_and_snapshot';
+
+function injectNavigateAndSnapshotTool(tools, name) {
+    if (tools.some((tool) => tool.name === BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL)) return;
+
+    tools.push({
+        name: BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL,
+        description: 'Prefer this tool for browsing web pages: navigate to a URL and immediately return browser_snapshot YAML page structure in one tool call. Search engine: https://searxng.iliyian.com/search?q=<kw>. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                url: { type: 'string', description: 'The URL to navigate to.' }
+            },
+            required: ['url'],
+            additionalProperties: false
+        }
+    });
+    console.log(`[${name}] 已注入 ${BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL} 工具`);
+}
+
+function rewriteResponseId(data, id) {
+    const msg = JSON.parse(data);
+    msg.id = id;
+    return JSON.stringify(msg);
+}
+
+function hasMCPError(data) {
+    const msg = JSON.parse(data);
+    return Boolean(msg.error || msg.result?.isError);
+}
+
+function endWithResponseId(res, data, id) {
+    if (res.writableEnded || res.destroyed) return;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(rewriteResponseId(data, id));
+}
 
 function createMCPManager(name, cmd, args, opts = {}) {
     let child = null;
@@ -72,11 +108,17 @@ function createMCPManager(name, cmd, args, opts = {}) {
                         line = JSON.stringify(msg);
                     }
 
+                    // 注入合并工具：导航后立即返回 YAML snapshot
+                    if (opts.injectNavigateAndSnapshot && method === 'tools/list' && msg.result && Array.isArray(msg.result.tools)) {
+                        injectNavigateAndSnapshotTool(msg.result.tools, name);
+                        line = JSON.stringify(msg);
+                    }
+
                     // 注入使用建议：修改 Playwright 工具描述
                     if (opts.injectHints && method === 'tools/list' && msg.result && Array.isArray(msg.result.tools)) {
                         for (const tool of msg.result.tools) {
                             if (tool.name === 'browser_navigate') {
-                                tool.description = 'Navigate to a URL. Search engine: https://searxng.iliyian.com/search?q=<kw>. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.';
+                                tool.description = `Navigate to a URL. Prefer ${BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL} for browsing web pages because it returns the YAML snapshot in the same tool call. Search engine: https://searxng.iliyian.com/search?q=<kw>. DO NOT visit Chinese sites (.cn, baidu, zhihu, csdn) due to overseas server blocks.`;
                                 console.log(`[${name}] 已修改 browser_navigate 工具描述`);
                             }
                             if (tool.name === 'browser_snapshot') {
@@ -126,13 +168,28 @@ function createMCPManager(name, cmd, args, opts = {}) {
             method,
             res: {
                 status() { return this; },
-                json() {},
+                json(data) { onDone && onDone(JSON.stringify({ jsonrpc: '2.0', id, error: data })); },
                 setHeader() {},
                 end(data) { onDone && onDone(data); }
             }
         });
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
         return id;
+    }
+
+    function callToolInternal(toolName, toolArgs, onDone) {
+        return sendInternal('tools/call', { name: toolName, arguments: toolArgs }, onDone);
+    }
+
+    function handleNavigateAndSnapshot(reqId, parsed, res) {
+        const toolArgs = parsed.params?.arguments || {};
+        callToolInternal('browser_navigate', { url: toolArgs.url }, (data) => {
+            if (hasMCPError(data)) {
+                endWithResponseId(res, data, reqId);
+                return;
+            }
+            callToolInternal('browser_snapshot', {}, (snapshotData) => endWithResponseId(res, snapshotData, reqId));
+        });
     }
 
     function handle(req, res) {
@@ -164,6 +221,12 @@ function createMCPManager(name, cmd, args, opts = {}) {
             delete parsed.params.arguments.dummy;
         }
 
+        if (opts.injectNavigateAndSnapshot && parsed.method === 'tools/call' && parsed.params?.name === BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL) {
+            handleNavigateAndSnapshot(reqId, parsed, res);
+            console.log(`[${name}:${reqId}] --> 已执行 ${BROWSER_NAVIGATE_AND_SNAPSHOT_TOOL}`);
+            return;
+        }
+
         pending.set(reqId, { res, method: parsed.method });
         child.stdin.write(JSON.stringify(parsed) + '\n');
         console.log(`[${name}:${reqId}] --> 已转发到 MCP 子进程`);
@@ -184,8 +247,8 @@ function createMCPManager(name, cmd, args, opts = {}) {
 // ==========================================
 const playwrightMCP = createMCPManager(
     'Playwright',
-    'bunx', ['@playwright/mcp@latest', '--browser', 'chromium'],
-    { injectDummy: true, stripDummy: true, injectHints: true }
+    'bunx', ['@playwright/mcp@0.0.60', '--browser', 'chromium', '--no-sandbox'],
+    { injectDummy: true, stripDummy: true, injectHints: true, injectNavigateAndSnapshot: true }
 );
 playwrightMCP.start();
 
